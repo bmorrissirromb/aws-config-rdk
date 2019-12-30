@@ -57,6 +57,12 @@ parameter_file_name = 'parameters.json'
 example_ci_dir = 'example_ci'
 test_ci_filename = 'test_ci.json'
 event_template_filename = 'test_event_template.json'
+pre_deploy_rsrc="dependencies"
+post_deploy_rsrc="add-ons"
+global_dependencies_path='/' + pre_deploy_rsrc + '/global'
+regional_dependencies_path='/' + pre_deploy_rsrc +'/regional'
+global_addons_path='/' + post_deploy_rsrc + '/global'
+regional_addons_path='/' + post_deploy_rsrc + '/regional'
 
 RDKLIB_LAYER_VERSION={'ap-southeast-1':'51', 'ap-south-1':'29', 'us-east-2':'31', 'us-east-1':'31', 'us-west-1':'31', 'us-west-2':'30', 'ap-northeast-2':'29', 'ap-southeast-2':'29', 'ap-northeast-1':'29', 'ca-central-1':'29', 'eu-central-1':'29', 'eu-west-1':'29', 'eu-west-2':'29', 'eu-west-3':'29', 'eu-north-1':'29', 'sa-east-1':'29'}
 RDKLIB_ARN_STRING = "arn:aws:lambda:{region}:711761543063:layer:rdklib:{version}"
@@ -222,6 +228,7 @@ def get_deployment_parser(ForceArgument=False, Command="deploy"):
     parser.add_argument('--lambda-layers', required=False, help="[optional] Comma-separated list of Lambda Layer ARNs to deploy with your Lambda function(s).")
     parser.add_argument('--lambda-subnets', required=False, help="[optional] Comma-separated list of Subnets to deploy your Lambda function(s).")
     parser.add_argument('--lambda-security-groups', required=False, help="[optional] Comma-separated list of Security Groups to deploy with your Lambda function(s).")
+    parser.add_argument('--include-global-rule-cfn-resources', action='store_true', help="[optional] Deploy or Undeploy (not just regional, but also global) rule dependencies or add-ons with custom CloudFormation templates in yaml or json format.")
 
     if ForceArgument:
         parser.add_argument("--force", required=False, action='store_true', help='[optional] Remove selected Rules from account without prompting for confirmation.')
@@ -748,17 +755,25 @@ class rdk:
 
         for rule_name in rule_names:
             try:
+                print(rule_name)
+                rule_dir = './' + rule_name
+                print("====START RULE UNDEPLOY:" + rule_name + "====")
+                print("==ADD-ONs UNDEPLOY==")
+                self.__undeploy_rule_cfn_resource(rule_name, rule_dir, regional_addons_path, cfn_client)
+                if self.args.include_global_rule_cfn_resources:
+                    self.__undeploy_rule_cfn_resource(rule_name, rule_dir, global_addons_path, cfn_client)
+                print("==CONFIG AND LAMBDA UNDEPLOY==")
+                print ("Deleting CloudFormation Stack: " + self.__get_stack_name_from_rule_name(rule_name))
                 cfn_client.delete_stack(StackName=self.__get_stack_name_from_rule_name(rule_name))
-                deleted_stacks.append(self.__get_stack_name_from_rule_name(rule_name))
+                self.__wait_for_cfn_stack(cfn_client, self.__get_stack_name_from_rule_name(rule_name))
+                print("==DEPENDENCIES UNDEPLOY==")
+                self.__undeploy_rule_cfn_resource(rule_name, rule_dir, regional_dependencies_path, cfn_client)
+                if self.args.include_global_rule_cfn_resources:
+                    self.__undeploy_rule_cfn_resource(rule_name, rule_dir, global_dependencies_path, cfn_client)
             except ClientError as ce:
                 print("Client Error encountered attempting to delete CloudFormation stack for Rule: " + str(ce))
             except Exception as e:
                 print("Exception encountered attempting to delete CloudFormation stack for Rule: " + str(e))
-
-        print("Rule removal initiated. Waiting for Stack Deletion to complete.")
-
-        for stack_name in deleted_stacks:
-            self.__wait_for_cfn_stack(cfn_client, stack_name)
 
         print("Rule removal complete, but local files have been preserved.")
         print("To re-deploy, use the 'deploy' command.")
@@ -814,45 +829,13 @@ class rdk:
                     s3_code_objects[rule_name] = s3_dst
 
             #Check if stack exists.  If it does, update it.  If it doesn't, create it.
-            my_cfn = my_session.client('cloudformation')
             my_template_url_prefix = "https://s3-"
             if my_session.region_name == "us-east-1":
                 my_template_url_prefix = "https://s3."
 
-            try:
-                my_stack = my_cfn.describe_stacks(StackName=self.args.stack_name)
-
-                #If we've gotten here, stack exists and we should update it.
-                print ("Updating CloudFormation Stack for Lambda functions.")
-                try:
-
-                    cfn_args = {
-                        'StackName': self.args.stack_name,
-                        'TemplateURL': my_template_url_prefix + my_session.region_name + ".amazonaws.com/" + code_bucket_name + "/" + self.args.stack_name + ".json",
-                        'Parameters': cfn_params,
-                        'Capabilities': [ 'CAPABILITY_IAM' ]
-                    }
-
-                    # If no tags key is specified, or if the tags dict is empty
-                    if cfn_tags is not None:
-                        cfn_args['Tags'] = cfn_tags
-
-                    response = my_cfn.update_stack(**cfn_args)
-
-                    #wait for changes to propagate.
-                    self.__wait_for_cfn_stack(my_cfn, self.args.stack_name)
-                except ClientError as e:
-                    if e.response['Error']['Code'] == 'ValidationError':
-                        if 'No updates are to be performed.' in str(e):
-                            #No changes made to Config rule definition, so CloudFormation won't do anything.
-                            print("No changes to Config Rule configurations.")
-                        else:
-                            #Something unexpected has gone wrong.  Emit an error and bail.
-                            print(e)
-                            return 1
-                    else:
-                        raise
-
+            cfn_url=my_template_url_prefix + my_session.region_name + ".amazonaws.com/" + code_bucket_name + "/" + self.args.stack_name + ".json"
+            result=self.__deploy_cloudformation_template(self.args.stack_name, cfn_tags, my_session, cfn_url, capabilities=[ 'CAPABILITY_IAM' ], cfn_params=cfn_params)
+            if result['status'] is "updated":
                 #Push lambda code to functions.
                 for rule_name in rule_names:
                     my_lambda_arn = self.__get_lambda_arn_for_rule(rule_name, partition, my_session.region_name, account_id)
@@ -860,44 +843,43 @@ class rdk:
                     if 'SourceIdentifier' in rule_params:
                         print("Skipping Lambda upload for Managed Rule.")
                         continue
-
-                    print("Publishing Lambda code...")
-                    my_lambda_client = my_session.client('lambda')
-                    my_lambda_client.update_function_code(
-                        FunctionName=my_lambda_arn,
-                        S3Bucket=code_bucket_name,
-                        S3Key=s3_code_objects[rule_name],
-                        Publish=True
-                    )
-                    print("Lambda code updated.")
-            except ClientError as e:
-                #If we're in the exception, the stack does not exist and we should create it.
-                print ("Creating CloudFormation Stack for Lambda Functions.")
-
-                cfn_args = {
-                    'StackName': self.args.stack_name,
-                    'TemplateURL': my_template_url_prefix + my_session.region_name + ".amazonaws.com/" + code_bucket_name + "/" + self.args.stack_name + ".json",
-                    'Parameters': cfn_params,
-                    'Capabilities': ['CAPABILITY_IAM']
-                }
-
-                # If no tags key is specified, or if the tags dict is empty
-                if cfn_tags is not None:
-                    cfn_args['Tags'] = cfn_tags
-
-                response = my_cfn.create_stack(**cfn_args)
-
-                #wait for changes to propagate.
-                self.__wait_for_cfn_stack(my_cfn, self.args.stack_name)
+                    self.__update_lambda_function_source(my_lambda_arn,code_bucket_name,s3_code_objects[rule_name], my_session)
 
             #We're done!  Return with great success.
             sys.exit(0)
 
         #If we're deploying both the functions and the Config rules, run the following process:
         for rule_name in rule_names:
+            my_s3_client = my_session.client('s3')
+            previous_results=[]
+
+            #Checking previous deployment result. If a cfn template is removed or renamed, this result will be used later on for cleanup
+            try:
+                previous_results=json.loads(my_s3_client.get_object(
+                    Bucket=code_bucket_name,
+                    Key=rule_name + "/results.json"
+                )["Body"].read().decode())
+            except Exception as e:
+                print("No previous deployment result found. Start initial deployment for " + rule_name )
+
+            print("====START RULE DEPLOYMENT: " + rule_name + "====")
             rule_params, cfn_tags = self.__get_rule_parameters(rule_name)
 
-            #create CFN Parameters common for Managed and Custom
+            rule_dir = './' + rule_name
+
+            results=[]
+            #deploy all cloudformation templates in dependencies path with option --deploy-cfn-dependencies
+            #cfn-dependencies in /global should only be deployed in the main region. Therefore, the option --deploy-cfn-dependencies is provided
+            #All resources that are non region specific or unique in account level (such as IAM , S3 bucket) should be created in global_dependencies_path
+            print("==DEPENDENCIES DEPLOYMENT==")
+            if self.args.include_global_rule_cfn_resources:
+                results += (self.__deploy_rule_cfn_resource(rule_dir, global_dependencies_path, self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, capabilities=['CAPABILITY_IAM'], previous_result=previous_results))
+
+            # regional dependencies will be deployed in each region along with the config rules.
+            results += (self.__deploy_rule_cfn_resource(rule_dir, regional_dependencies_path, self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, previous_result=previous_results))
+
+        #create CFN Parameters common for Managed and Custom
+            print("==CONFIG AND LAMBDA DEPLOYMENT==")
             source_events = "NONE"
             if 'SourceEvents' in rule_params:
                 source_events = rule_params['SourceEvents']
@@ -948,54 +930,8 @@ class rdk:
                     }]
 
                 #deploy config rule
-                cfn_body = os.path.join(path.dirname(__file__), 'template',  "configManagedRule.json")
-                my_cfn = my_session.client('cloudformation')
-
-                try:
-                    my_stack_name = self.__get_stack_name_from_rule_name(rule_name)
-                    my_stack = my_cfn.describe_stacks(StackName=my_stack_name)
-                    #If we've gotten here, stack exists and we should update it.
-                    print ("Updating CloudFormation Stack for " + rule_name)
-                    try:
-                        cfn_args = {
-                            'StackName': my_stack_name,
-                            'TemplateBody': open(cfn_body, "r").read(),
-                            'Parameters': my_params
-                        }
-
-                        # If no tags key is specified, or if the tags dict is empty
-                        if cfn_tags is not None:
-                            cfn_args['Tags'] = cfn_tags
-
-                        response = my_cfn.update_stack(**cfn_args)
-                    except ClientError as e:
-                        if e.response['Error']['Code'] == 'ValidationError':
-                            if 'No updates are to be performed.' in str(e):
-                                #No changes made to Config rule definition, so CloudFormation won't do anything.
-                                print("No changes to Config Rule.")
-                            else:
-                                #Something unexpected has gone wrong.  Emit an error and bail.
-                                print(e)
-                                return 1
-                        else:
-                            raise
-                except ClientError as e:
-                    #If we're in the exception, the stack does not exist and we should create it.
-                    print ("Creating CloudFormation Stack for " + rule_name)
-                    cfn_args = {
-                        'StackName': my_stack_name,
-                        'TemplateBody': open(cfn_body, "r").read(),
-                        'Parameters': my_params
-                    }
-
-                    if cfn_tags is not None:
-                        cfn_args['Tags'] = cfn_tags
-
-                    response = my_cfn.create_stack(**cfn_args)
-
-                #wait for changes to propagate.
-                self.__wait_for_cfn_stack(my_cfn, my_stack_name)
-
+                cfn_template = os.path.join(path.dirname(__file__), 'template',  "configManagedRule.json")
+                results += (self.__deploy_cloudformation_template(self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, cfn_template=cfn_template,cfn_params=my_params, previous_result=previous_results))
                 continue
 
             print("Found Custom Rule.")
@@ -1092,65 +1028,28 @@ class rdk:
             #print(json.dumps(json_body, indent=2))
 
             #deploy config rule
-            my_cfn = my_session.client('cloudformation')
-            try:
-                my_stack_name = self.__get_stack_name_from_rule_name(rule_name)
-                my_stack = my_cfn.describe_stacks(StackName=my_stack_name)
-                #If we've gotten here, stack exists and we should update it.
-                print ("Updating CloudFormation Stack for " + rule_name)
-                try:
-                    cfn_args = {
-                        'StackName': my_stack_name,
-                        'TemplateBody': json.dumps(json_body),
-                        'Parameters': my_params,
-                        'Capabilities': ['CAPABILITY_IAM']
-                    }
+            result=self.__deploy_cloudformation_template(self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, cfn_body=json.dumps(json_body), cfn_params=my_params, capabilities=['CAPABILITY_IAM'])
+            if result['status'] is "updated":
+                my_lambda_arn = self.__get_lambda_arn_for_stack(result['name'])
+                self.__update_lambda_function_source(my_lambda_arn,code_bucket_name,s3_dst, my_session)
 
-                    # If no tags key is specified, or if the tags dict is empty
-                    if cfn_tags is not None:
-                        cfn_args['Tags'] = cfn_tags
+            print("==ADD-ONs DEPLOYMENT==")
 
-                    response = my_cfn.update_stack(**cfn_args)
-                except ClientError as e:
-                    if e.response['Error']['Code'] == 'ValidationError':
-                        if 'No updates are to be performed.' in str(e):
-                            #No changes made to Config rule definition, so CloudFormation won't do anything.
-                            print("No changes to Config Rule.")
-                        else:
-                            #Something unexpected has gone wrong.  Emit an error and bail.
-                            print(e)
-                            return 1
-                    else:
-                        raise
+            #deploy all cloudformation templates in add-ons path with option --deploy-cfn-dependencies
+            #cfn-addons in /global should only be deployed in the main region. Therefore, the option --deploy-cfn-dependencies is provided
+            #All resources that are non region specific or unique in account level (such as IAM , S3 bucket) should be created in global_addons_path
+            if self.args.include_global_rule_cfn_resources:
+                results += (self.__deploy_rule_cfn_resource(rule_dir, global_addons_path, self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, capabilities=['CAPABILITY_IAM'], previous_result=previous_results))
 
-                my_lambda_arn = self.__get_lambda_arn_for_stack(my_stack_name)
+            # regional addons will be deployed in each region along with the config rules.
+            results += (self.__deploy_rule_cfn_resource(rule_dir, regional_addons_path, self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, previous_result=previous_results))
 
-                print("Publishing Lambda code...")
-                my_lambda_client = my_session.client('lambda')
-                my_lambda_client.update_function_code(
-                    FunctionName=my_lambda_arn,
-                    S3Bucket=code_bucket_name,
-                    S3Key=s3_dst,
-                    Publish=True
-                )
-                print("Lambda code updated.")
-            except ClientError as e:
-                #If we're in the exception, the stack does not exist and we should create it.
-                print ("Creating CloudFormation Stack for " + rule_name)
-                cfn_args = {
-                    'StackName': my_stack_name,
-                    'TemplateBody': json.dumps(json_body),
-                    'Parameters': my_params,
-                    'Capabilities': ['CAPABILITY_IAM']
-                }
-
-                if cfn_tags is not None:
-                    cfn_args['Tags'] = cfn_tags
-
-                response = my_cfn.create_stack(**cfn_args)
-
-            #wait for changes to propagate.
-            self.__wait_for_cfn_stack(my_cfn, my_stack_name)
+            #Write results to S3
+            my_s3_client.put_object(
+                Body=json.dumps(results),
+                Bucket=code_bucket_name,
+                Key=rule_name + "/results.json"
+            )
 
         print('Config deploy complete.')
 
@@ -1777,6 +1676,11 @@ class rdk:
         output = rule_name.replace("_","")
 
         return output
+
+    def __get_stack_name_for_rule_cfn_resource(self, stack_name, rule_cfn_resource_name):
+        stack_name += "-" + rule_cfn_resource_name.rsplit('.', 1)[0].replace("_", "")
+
+        return stack_name
 
     def __get_alphanumeric_rule_name(self, rule_name):
         output = rule_name.replace("_","").replace("-","")
@@ -2423,6 +2327,140 @@ class rdk:
         template['Resources'] = resources
 
         return json.dumps(template, indent=2)
+
+    def __update_lambda_function_source(self, my_lambda_arn, code_bucket_name, code_object_key, my_session):
+
+        print("Publishing Lambda code...")
+        my_lambda_client = my_session.client('lambda')
+        my_lambda_client.update_function_code(
+            FunctionName=my_lambda_arn,
+            S3Bucket=code_bucket_name,
+            S3Key=code_object_key,
+            Publish=True
+        )
+        print("Lambda code updated.")
+
+    def __undeploy_rule_cfn_resource(self, rule_name, rule_dir, path, cfn_client):
+        deleted_stacks=[]
+        try:
+            if os.path.isdir(rule_dir + path):
+                regional_template_names = os.listdir(rule_dir + path)
+                for template_name in regional_template_names:
+                    if template_name.endswith(".json") or template_name.endswith(".yaml"):
+                        stack_name=self.__get_stack_name_for_rule_cfn_resource(self.__get_stack_name_from_rule_name(rule_name), template_name)
+                        print ("Deleting CloudFormation Stack: " + stack_name)
+                        cfn_client.delete_stack(StackName=stack_name)
+                        self.__wait_for_cfn_stack(cfn_client, stack_name)
+        except ClientError as ce:
+            print("Client Error encountered attempting to delete CloudFormation stack for Rule: " + str(ce))
+        except Exception as e:
+            print("Exception encountered attempting to delete CloudFormation stack for Rule: " + str(e))
+        return deleted_stacks
+
+    def __deploy_rule_cfn_resource(self, rule_dir, path, my_stack_name, cfn_tags, my_session, capabilities=None, previous_result=None):
+        my_cfn = my_session.client('cloudformation')
+        results=[]
+        # print(previous_results[0]['path'])
+        existing_stack_names=[d['name'] for d in previous_result if d['path'] == path]
+        deploy_stacks={}
+
+        if os.path.isdir(rule_dir + path):
+            template_names = os.listdir(rule_dir + path)
+            for template_name in template_names:
+                if template_name.endswith(".json") or template_name.endswith(".yaml"):
+                    deploy_stacks[self.__get_stack_name_for_rule_cfn_resource(my_stack_name, template_name)] = rule_dir + path + '/' + template_name
+
+        deploy_stack_names=deploy_stacks.keys()
+
+        for cleanup_stack_name in list(set(existing_stack_names) - set(deploy_stack_names)):
+            try:
+                print(cleanup_stack_name + " template is removed\n Deleting CloudFormation Stack: " + cleanup_stack_name)
+                my_cfn.delete_stack(StackName=cleanup_stack_name)
+                self.__wait_for_cfn_stack(my_cfn, cleanup_stack_name)
+            except ClientError as ce:
+                print("Client Error encountered attempting to delete CloudFormation stack for Rule: " + str(ce))
+            except Exception as e:
+                print("Exception encountered attempting to delete CloudFormation stack for Rule: " + str(e))
+
+        for stack_name in deploy_stack_names:
+            result=self.__deploy_cloudformation_template(stack_name, cfn_tags, my_session, cfn_template=deploy_stacks[stack_name], capabilities=capabilities)
+            result['path']=path
+            results.append(result)
+        return results
+
+    def __deploy_cloudformation_template(self, my_stack_name, cfn_tags, my_session, cfn_template=None, cfn_body=None, cfn_url=None, rule_cfn_resource_name=None, capabilities=None, cfn_params=None):
+            my_cfn = my_session.client('cloudformation')
+            result = {}
+            try:
+                my_stack = my_cfn.describe_stacks(StackName=my_stack_name)
+                #If we've gotten here, stack exists and we should update it.
+                print ("Updating CloudFormation Stack: " + my_stack_name)
+                try:
+                    cfn_args = {
+                        'StackName': my_stack_name
+                    }
+                    if cfn_template and not cfn_body and not cfn_url:
+                        cfn_args['TemplateBody']=open(cfn_template, "r").read()
+                    elif cfn_body and not cfn_template and not cfn_url:
+                        cfn_args['TemplateBody']=cfn_body
+                    elif cfn_url and not cfn_body and not cfn_template:
+                        cfn_args['TemplateURL']=cfn_url
+                    else:
+                        raise ValidationError('There are multiple inputs for option TemplateBody or TemplateURL')
+                    if capabilities:
+                        cfn_args['Capabilities']=capabilities
+                    if cfn_params:
+                        cfn_args['Parameters']=cfn_params
+                    # If no tags key is specified, or if the tags dict is empty
+                    if cfn_tags is not None:
+                        cfn_args['Tags'] = cfn_tags
+
+                    response = my_cfn.update_stack(**cfn_args)
+                    result['name']=my_stack_name
+                    result['status']="updated"
+                except ClientError as e:
+                    if e.response['Error']['Code'] == 'ValidationError':
+                        if 'No updates are to be performed.' in str(e):
+                            #No changes made to Config rule definition, so CloudFormation won't do anything.
+                            print("No changes to Config Rule.")
+                            result['name']=my_stack_name
+                            result['status']="no_changes"
+                        else:
+                            #Something unexpected has gone wrong.  Emit an error and bail.
+                            print(e)
+                            return 1
+                    else:
+                        raise
+            except ClientError as e:
+                #If we're in the exception, the stack does not exist and we should create it.
+                print ("Creating CloudFormation Stack: " + my_stack_name)
+                cfn_args = {
+                    'StackName': my_stack_name
+                }
+                if cfn_template and not cfn_body and not cfn_url:
+                    cfn_args['TemplateBody']=open(cfn_template, "r").read()
+                elif cfn_body and not cfn_template and not cfn_url:
+                    cfn_args['TemplateBody']=cfn_body
+                elif cfn_url and not cfn_body and not cfn_template:
+                    cfn_args['TemplateURL']=cfn_url
+                else:
+                    raise ValidationError('There are multiple inputs for option TemplateBody or TemplateURL')
+                if capabilities:
+                    cfn_args['Capabilities']=['CAPABILITY_IAM']
+                if cfn_params:
+                    cfn_args['Parameters']=cfn_params
+                if cfn_tags is not None:
+                    cfn_args['Tags'] = cfn_tags
+
+                response = my_cfn.create_stack(**cfn_args)
+                result['name']=my_stack_name
+                result['status']="created"
+
+            #wait for changes to propagate.
+            self.__wait_for_cfn_stack(my_cfn, my_stack_name)
+            print ("")
+
+            return result
 
 class TestCI():
     def __init__(self, ci_type):
