@@ -931,7 +931,7 @@ class rdk:
 
                 #deploy config rule
                 cfn_template = os.path.join(path.dirname(__file__), 'template',  "configManagedRule.json")
-                results += (self.__deploy_cloudformation_template(self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, cfn_template=cfn_template,cfn_params=my_params, previous_result=previous_results))
+                results += (self.__deploy_cloudformation_template(self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, cfn_template=cfn_template,cfn_params=my_params))
                 continue
 
             print("Found Custom Rule.")
