@@ -929,10 +929,24 @@ class rdk:
                         'ParameterValue': rule_params['SourceIdentifier']
                     }]
 
-                #deploy config rule
-                cfn_template = os.path.join(path.dirname(__file__), 'template',  "configManagedRule.json")
-                results += (self.__deploy_cloudformation_template(self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, cfn_template=cfn_template,cfn_params=my_params))
-                continue
+                my_cfn = my_session.client('cloudformation')
+                #Check if this managed rule needs to have an assoicated remediation block
+                remediation = ""
+                if "Remediation" in rule_params:
+                    print('Build The CFN Template with Remediation Settings')
+                    cfn_body = os.path.join(path.dirname(__file__), 'template',  "configManagedRuleWithRemediation.json")
+                    template_body = open(cfn_body, "r").read()
+                    json_body = json.loads(template_body)
+                    remediation = self.__create_remediation_cloudformation_block(rule_params["Remediation"])
+                    json_body["Resources"]["Remediation"] = remediation
+
+                    results += (self.__deploy_cloudformation_template(self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, cfn_body=json.dumps(json_body),cfn_params=my_params))
+                    continue
+                else:
+                    #deploy config rule
+                    cfn_template = os.path.join(path.dirname(__file__), 'template',  "configManagedRule.json")
+                    results += (self.__deploy_cloudformation_template(self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, cfn_template=cfn_template,cfn_params=my_params))
+                    continue
 
             print("Found Custom Rule.")
 

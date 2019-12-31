@@ -194,6 +194,44 @@ This command generates a CloudFormation template that defines the AWS Config rul
   Generating CloudFormation template!
   CloudFormation template written to remote-rule-template.json
 
+Rules CloudFormation Resource Deployments
+----------------------------------
+Features have been added to the RDK to facilitate the deployment of Cloudformation resources that associated with the config rules.
+There are 4 types of Cloudformation resources:
+1. Global Dependencies: deploy before rules deployment, global resources that only deploy in main region. Such as IAM, CloudFront
+2. Regional Dependencies: deploy before rules deployment, regional resources that deploy in all region. Such as SNS, SQS, Cloudwatch Event
+3. Global Add-ons: deploy after rules deployment, global resources that only deploy in main region. Such as IAM, CloudFront
+4. Regional Add-ons: deploy before rules deployment, regional resources that deploy in all region. Such as SNS, SQS, Cloudwatch Event
+
+**Include global rule cfn resource deployment**
+The regional resources are deployed with `deploy` command by default.
+The global resources will be deployed by using the `--include-global-rule-cfn-resources` flag on the `deploy` command. This should be used when running deployment in main region.
+
+Directory structure:
+    rule_A
+        -> add-ons
+            -> global
+                iam1.yaml
+            -> regional
+                cloudwatch.yml
+        -> dependencies
+            -> global
+                iam2.yaml
+            -> regional
+                sns.yaml
+        rule_A.py
+        rule_A_test.py
+        parameters.json
+Remark: The names of template in the rules directory should be unique (see iam1.yaml and iam2.yaml above). The cloudformation stack name will be "ruleA-iam1", "ruleA-iam1" for example. You can also use cloudformation Import/Export for parameters reference. Please check the examples for more details.
+
+Benefits:
+1. The deployment of Dependencies can create the resources associated with AWS config Auto Remediation Actions.
+        For example, user can create custom SSM Automation, SNS topic, SQS for AWS Config Auto Remediation Actions
+2. The deployment of Add-ons can create the resources for integration with other AWS services.
+        For example, user can create a cloudwatch event based on the Config Rule status and trigger the creation of opsItems for Config/OpsCenter Integration.
+3. Create and Cleanup Rules and associated resources as a bundle using the `rdk deploy` and `rdk undeploy` command.
+
+
 
 RuleSets
 --------
@@ -236,16 +274,17 @@ To do so, create a rule using "rdk create" and provide a valid SourceIdentifier 
 Contributing
 ============
 
-email me at mborch@amazon.com if you are interested in contributing.  I'm using the github issues log as my "to-do" list, and I'm also happy to get PR's if you see something you want to fix.
+email me at rdk-maintainers@amazon.com if you are interested in contributing.  I'm using the github issues log as my "to-do" list, and I'm also happy to get PR's if you see something you want to fix.
 
 Authors
 =======
 
-* **Michael Borchert** - *Python version & current maintainer*
+* **Michael Borchert** - *Python version*
 * **Jonathan Rault** - *Design, testing, feedback*
 * **Greg Kim and Chris Gutierrez** - *Initial work and CI definitions*
 * **Henry Huang** - *Original CFN templates and other code*
-
+* **Ricky Chau** - *fixes, new features & Current Maintainer*
+* **Santosh Kumar** - *fixes, new features & Current Maintainer*
 
 
 License
