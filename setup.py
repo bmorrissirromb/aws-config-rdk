@@ -26,6 +26,7 @@ setup(name='rdk',
       packages=['rdk'],
       install_requires=[
           'boto3',
+          'cfn_flip',
           'mock==3.0.5',
           'future'
       ],
