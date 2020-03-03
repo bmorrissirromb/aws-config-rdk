@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  Stage:
+    Type: String
+    Description: Deploy to Gamma or Prod Endpoint for Ops Center
+    Default: Prod
+    AllowedValues:
+      - Gamma
+      - Prod
+  CloudWatchEventIAMRole:
+    Type: String
+    Description: The IAM role that grants CloudWatchEvent access to create OpsItems
+    Default: service-role/AWS_Events_Invoke_Create_Ops_Item_1865820173
+
+Mappings:
+  Settings:
+    FrequencyMap:
+      1hour   : One_Hour
+      3hours  : Three_Hours
+      6hours  : Six_Hours
+      12hours : Twelve_Hours
+      24hours : TwentyFour_Hours
+    SnSOpsItem:
+      Prod: 946491653051
+      Gamma: 111111111111
+
+Resources:
+  CheckCloudTrailCloudWatchLogsConfigRuleCloudWatchEvent:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Description: "CloudWatch Rule which creates Ops Items for CloudTrail Compliance Events"
+      EventPattern:
+        source:
+          - aws.config
+        detail-type:
+          - 'Config Rules Compliance Change'
+        detail:
+          configRuleName:
+            - S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+          newEvaluationResult:
+            complianceType:
+              - NON_COMPLIANT
+      State: "ENABLED"
+      Targets:
+        - Arn: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:opsitem
+          Id: SSM-OpsItem
+          RoleArn: !ImportValue S3-BUCKET-SERVER-SIDE-ENCRYPTION-ENABLED-createOpsItem-iam
+          InputTransformer:
+            InputTemplate:
+              Fn::Sub:
+                - '{ "title": "CloudTrail CloudWatch Logs Compliance Failure",
+                     "description": "CloudWatch Event Rule was triggered for Config Compliance Rule Failure.",
+                     "source": "Config Compliance",
+                     "priority": "2",
+                     "severity": "1",
+                     "notifications": [{ "arn": "arn:${AWS::Partition}:sns:${AWS::Region}:${accountId}:OpsCenterEventNotificationTopic"}],
+                     "resources": <resources>,
+                     "operationalData": {
+                       "/aws/dedup": {"type": "SearchableString","value": "{\"dedupString\":\"SSMOpsItems-S3-Encrypted-enabled-failed\"}"},
+                       "/aws/automations": { "value": "[ { \"automationType\": \"AWS:SSM:Automation\", \"automationId\": \"AWS-EnableS3BucketEncryption\" } ]" },
+                       "/aws/resources": {"value": "[{\"arn\":\"arn:aws:s3:::$resourceID\"}]","type": "SearchableString"},
+                       "configRuleName": {"type": "SearchableString","value": <configRuleName>},
+                       "resourceType": {"type": "SearchableString","value": <resourceType>},
+                       "resourceId": {"type": "SearchableString","value": <resourceId>}
+                     }
+                   }'
+                - accountId: !FindInMap [Settings, SnSOpsItem, !Ref Stage]
+            InputPathsMap:
+              configRuleName: "$.configRuleName"
+              resources: "$.resources"
+              resourceType: "$.detail.resourceType"
+              resourceId: "$.detail.resourceId"

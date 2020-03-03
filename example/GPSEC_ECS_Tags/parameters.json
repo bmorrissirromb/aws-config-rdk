@@ -1,0 +1,48 @@
+{
+  "Version": "1.0",
+  "Parameters": {
+    "RuleName": "GPSEC_ECS_Tags",
+    "SourceRuntime": "python3.6-lib",
+    "CodeKey": "GPSEC_ECS_Tags.zip",
+    "InputParameters": "{}",
+    "OptionalParameters": "{}",
+    "SourcePeriodic": "One_Hour",
+    "RuleSets": [
+      "baseline"
+    ],
+    "Remediation": {
+      "Automatic": true,
+      "ConfigRuleName": "GPSEC_ECS_Tags",
+      "MaximumAutomaticAttempts": "2",
+      "Parameters": {
+        "AutomationAssumeRole": {
+          "StaticValue": {
+            "Values": [
+              { "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/sns-access" }
+            ]
+          }
+        },
+        "Message": {
+          "StaticValue": {
+            "Values": [
+              "hi"
+            ]
+          }
+        },
+        "TopicArn": {
+          "StaticValue": {
+            "Values": [
+              { "Fn::Sub": "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:rules-notification" }
+            ]
+          }
+        }
+      },
+      "ResourceType": "AWS::EC2::Instance",
+      "RetryAttemptSeconds": "2",
+      "TargetId": "AWS-PublishSNSNotification",
+      "TargetType": "SSM_DOCUMENT",
+      "TargetVersion": "1"
+    }
+  },
+  "Tags": "[{\"Key\" : \"keyname1\",\"Value\" : \"value1\"}]"
+}

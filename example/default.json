@@ -1,0 +1,52 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "AWS CloudFormation template to create custom AWS Config rules. You will be billed for the AWS resources used if you create a stack from this template.",
+  "Resources": {
+    "S3BUCKETSERVERSIDEENCRYPTIONENABLEDv2": {
+      "Type": "AWS::CloudFormation::Stack",
+      "Properties": {
+        "TemplateURL": "https://config-rule-code-bucket-004670408193-us-east-1.s3.amazonaws.com/S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED_v2/S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED_v2-config-rule.json"
+      }
+    },
+    "S3BUCKETSERVERSIDEENCRYPTIONENABLED": {
+      "Type": "AWS::CloudFormation::Stack",
+      "Properties": {
+        "TemplateURL": "https://config-rule-code-bucket-004670408193-us-east-1.s3.amazonaws.com/S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED/S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED-config-rule.json"
+      }
+    },
+    "GPSECECSTags": {
+      "Type": "AWS::CloudFormation::Stack",
+      "Properties": {
+        "TemplateURL": "https://config-rule-code-bucket-004670408193-us-east-1.s3.amazonaws.com/GPSEC_ECS_Tags/GPSEC_ECS_Tags-config-rule.json"
+      }
+    }
+  },
+  "Conditions": {},
+  "Parameters": {
+    "LambdaAccountId": {
+      "Description": "Account ID that contains Lambda functions for Config Rules.",
+      "Type": "String",
+      "MinLength": "12",
+      "MaxLength": "12"
+    }
+  },
+  "Metadata": {
+    "AWS::CloudFormation::Interface": {
+      "ParameterGroups": [
+        {
+          "Label": {
+            "default": "Lambda Account ID"
+          },
+          "Parameters": [
+            "LambdaAccountId"
+          ]
+        }
+      ],
+      "ParameterLabels": {
+        "LambdaAccountId": {
+          "default": "REQUIRED: Account ID that contains Lambda Function(s) that back the Rules in this template."
+        }
+      }
+    }
+  }
+}

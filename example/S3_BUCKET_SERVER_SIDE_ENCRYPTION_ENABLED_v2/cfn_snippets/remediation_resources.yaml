@@ -1,0 +1,60 @@
+Parameters:
+  MainRegion:
+    Description: Region which is designated as main Region in your Compliance Account.
+    Default: us-east-1
+    AllowedValues:
+      - us-east-1
+      - us-east-2
+      - us-west-1
+      - us-west-2
+      - ap-south-1
+      - ap-northeast-1
+      - ap-northeast-2
+      - ap-southeast-1
+      - ap-southeast-2
+      - ca-central-1
+      - eu-central-1
+      - eu-west-1
+      - eu-west-2
+      - eu-west-3
+      - sa-east-1
+    AllowedPattern: ^.{0,14}$
+    ConstraintDescription: Select one AWS Region only.
+    Type: String
+  MyTopicRoleName:
+    Type: String
+    Description: SNS Topic IAM role name
+    Default: S3-BUCKET-SERVER-SIDE-ENCRYPTION-ENABLED-sns-iam
+  TopicName:
+    Type: String
+    Description: SNS Topic Name
+    Default: S3-BUCKET-SERVER-SIDE-ENCRYPTION-ENABLED-sns-topic
+
+Conditions:
+  IsMainRegion: !Equals [ !Ref 'AWS::Region', !Ref MainRegion ]
+
+Resources:
+  MyTopicRole:
+    Condition: IsMainRegion
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: ['sts:AssumeRole']
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+      Path: /
+      Policies:
+        - PolicyName: !Ref MyTopicRoleName
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 'sns:*'
+                Resource: '*'
+  MyTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Ref TopicName
+      TopicName: !Ref TopicName
