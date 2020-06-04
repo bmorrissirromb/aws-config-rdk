@@ -12,6 +12,7 @@ rdk/__pycache__/
 # Distribution / packaging
 .Python
 build/
+opt/
 develop-eggs/
 dist/
 downloads/

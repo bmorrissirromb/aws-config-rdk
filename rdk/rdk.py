@@ -298,12 +298,13 @@ def get_rulesets_parser():
 def get_create_rule_template_parser():
     parser = argparse.ArgumentParser(
         prog='rdk create-rule-template',
-        description="Outputs a CloudFormation template that can be used to deploy Config Rules in other AWS Accounts."
+        description="Uploads each config rule cloudformation template and Outputs a CloudFormation template(with config rule cfn template as nested stacks) that can be used to deploy Config Rules in other AWS Accounts."
     )
     parser.add_argument('rulename', metavar='<rulename>', nargs='*', help='Rule name(s) to include in template.  A CloudFormation template will be created, but Rule(s) will not be pushed to AWS.')
     parser.add_argument('--all','-a', action='store_true', help="All rules in the working directory will be included in the generated CloudFormation template.")
     parser.add_argument('-s','--rulesets', required=False, help='comma-delimited RuleSet names to be included in the generated template.')
     parser.add_argument('-o','--output-file', required=True, default="RDK-Config-Rules", help="filename of generated CloudFormation template")
+    parser.add_argument('-b','--code-bucket-name', required=False, help="[optional] provide custom code bucket name. By default, it is using the config-rule-code-bucket-<accountId>-<region> which created with rdk init")
     parser.add_argument('--config-role-arn', required=False, help="[optional] Assign existing iam role as config role. If omitted, \"config-role\" will be created.")
     parser.add_argument('--rules-only', action="store_true", help="[optional] Generate a CloudFormation Template that only includes the Config Rules and not the Bucket, Configuration Recorder, and Delivery Channel.")
     return parser
@@ -845,7 +846,7 @@ class rdk:
             config.signature_version = botocore.UNSIGNED
             cfn_url = boto3.client('s3', config=config).generate_presigned_url('get_object', ExpiresIn=0, Params={'Bucket': code_bucket_name, 'Key': self.args.stack_name + ".json"})
 
-            result=self.__deploy_cloudformation_template(self.args.stack_name, cfn_tags, my_session, cfn_url, capabilities=[ 'CAPABILITY_IAM' ], cfn_params=cfn_params)
+            result=self.__deploy_cloudformation_template(self.args.stack_name, cfn_tags, my_session, cfn_url=cfn_url, capabilities=[ 'CAPABILITY_IAM' ], cfn_params=cfn_params)
             if result['status'] is "updated":
                 #Push lambda code to functions.
                 for rule_name in rule_names:
@@ -1145,7 +1146,7 @@ class rdk:
         #Next, go through each rule in our rule list and add the CFN to deploy it.
         rule_names = self.__get_rule_list_for_command()
         for rule_name in rule_names:
-            code_bucket_name = code_bucket_prefix + account_id + "-" + my_session.region_name
+            code_bucket_name = self.args.code_bucket_name or code_bucket_prefix + account_id + "-" + my_session.region_name
             resources.update(self.__create_nested_stack_for_config_rule(rule_name, code_bucket_name, my_session))
 
         template["Resources"] = resources
@@ -1227,30 +1228,17 @@ class rdk:
                     'ParameterValue': rule_params['SourceIdentifier']
                 }]
 
-            #Check if this managed rule needs to have an assoicated remediation block
+            #deploy config rule
+            cfn_body = os.path.join(path.dirname(__file__), 'template',  "configManagedRule.json")
+            template_body = open(cfn_body, "r").read()
+            print(template_body)
+            json_body = json.loads(template_body)
             if "Remediation" in rule_params:
-                print('Build The CFN Template with Remediation Settings')
-                cfn_body = os.path.join(path.dirname(__file__), 'template',  "configManagedRuleWithRemediation.json")
-                template_body = open(cfn_body, "r").read()
-                json_body = json.loads(template_body)
                 remediation = self.__create_remediation_cloudformation_block(rule_params["Remediation"])
                 json_body["Resources"]["Remediation"] = remediation
-                #append cloudformation snippet for additional resources in yaml or json format
-                json_body=self.__append_additional_resources(json_body, rule_name, additional_resources_path)
-                print(json_body)
-                print(json.dumps(json_body, indent=2))
-                if not create_rule_template_only:
-                    self.__deploy_cloudformation_template(self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, cfn_body=json.dumps(json_body),cfn_params=my_params, capabilities=['CAPABILITY_IAM'])
-            else:
-                #deploy config rule
-                cfn_body = os.path.join(path.dirname(__file__), 'template',  "configManagedRule.json")
-                template_body = open(cfn_body, "r").read()
-                json_body = json.loads(template_body)
-                #append cloudformation snippet for additional resources in yaml or json format
-                json_body=self.__append_additional_resources(json_body, rule_name, additional_resources_path)
-                print(json_body)
-                if not create_rule_template_only:
-                    self.__deploy_cloudformation_template(self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, cfn_body=json_body,cfn_params=my_params)
+            #append cloudformation snippet for additional resources in yaml or json format
+            json_body=self.__append_additional_resources(json_body, rule_name, additional_resources_path)
+            self.__deploy_cloudformation_template(self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, cfn_body=json.dumps(json_body),cfn_params=my_params, capabilities=['CAPABILITY_IAM'])
         elif 'SourceRuntime' in rule_params:
             print("Found Custom Rule.")
             if not create_rule_template_only:
@@ -1342,10 +1330,7 @@ class rdk:
             json_body=self.__append_additional_resources(json_body, rule_name, additional_resources_path)
             #debugging
             #print(json.dumps(json_body, indent=2))
-
-            if not create_rule_template_only:
-            #deploy config rule
-                self.__deploy_cloudformation_template(self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, cfn_body=json.dumps(json_body), cfn_params=my_params, capabilities=['CAPABILITY_IAM'])
+            self.__deploy_cloudformation_template(self.__get_stack_name_from_rule_name(rule_name), cfn_tags, my_session, cfn_body=json.dumps(json_body), cfn_params=my_params, capabilities=['CAPABILITY_IAM'])
         else:
             raise ValidationError("Please specify parameter SourceRuntime(for custom rule) or SourceIdentifier(for managed rules)")
         return json_body
@@ -2032,7 +2017,8 @@ class rdk:
         my_s3 = session.resource('s3')
 
         print ("Uploading " + rule_name)
-        my_s3.meta.client.upload_file(s3_src, code_bucket_name, s3_dst)
+        response=my_s3.meta.client.upload_file(s3_src, code_bucket_name, s3_dst)
+        print(response)
         print ("Upload complete.")
 
         return s3_dst
@@ -2223,27 +2209,176 @@ class rdk:
     def __create_nested_stack_for_config_rule(self, rule_name, bucketname, my_session):
         cfn_snippet={}
         nest_stack={}
-        #TODO: my_s3_client = my_session.client('s3')
+        my_s3_client = my_session.client('s3')
         print ("Generating " + rule_name + "CloudFormation template!")
 
-        template=self.__create_rule(my_session, rule_name, create_rule_template_only=True)
+        template=self.__create_rule_template_only(rule_name)
 
-        output_file_name=template_dir + rule_name + "-config-rule.json"
-        output_file = open(output_file_name, 'w')
-        output_file.write(json.dumps(template, indent=2))
-        print("Sub Nested Stack CloudFormation template written to " + output_file_name)
-        print("Uploading " + output_file_name + " to S3")
+        output_file_name=rule_name + "-config-rule.json"
+        print("Uploading Nested Stack CloudFormation template [{}] to S3".format(output_file_name))
 
         s3_dist=rule_name + "/" + rule_name + "-config-rule.json"
-        #TODO: my_s3_client.upload_file(output_file_name,bucketname,s3_dist)
-
+        try:
+            my_s3_client.put_object(Body=json.dumps(template, indent=2),Bucket=bucketname,Key=s3_dist)
+            print("Nested Stack Template uploaded to https://{}.s3.amazonaws.com/{}".format(bucketname, s3_dist))
+        except ClientError as e:
+            raise e
         config_rule_resource_name = self.__get_alphanumeric_rule_name(rule_name)
         nest_stack["Type"] = "AWS::CloudFormation::Stack"
         nest_stack["Properties"] = {}
         nest_stack["Properties"]["TemplateURL"] = "https://" + bucketname + ".s3.amazonaws.com/" + s3_dist
+        nest_stack["Properties"]["Parameters"] = {
+            "LambdaAccountId": {"Ref": "LambdaAccountId"}
+        }
         cfn_snippet[config_rule_resource_name] = nest_stack
 
         return cfn_snippet
+
+    def __create_rule_template_only(self, rule_name):
+        #First add the common elements - description, parameters, and resource section header
+        template = {}
+        template["AWSTemplateFormatVersion"] = "2010-09-09"
+        template["Description"] = "AWS CloudFormation template to create custom AWS Config rules. You will be billed for the AWS resources used if you create a stack from this template."
+
+        parameters = {}
+        parameters["LambdaAccountId"] = {}
+        parameters["LambdaAccountId"]["Description"] = "Account ID that contains Lambda functions for Config Rules."
+        parameters["LambdaAccountId"]["Type"] = "String"
+        parameters["LambdaAccountId"]["MinLength"] = "12"
+        parameters["LambdaAccountId"]["MaxLength"] = "12"
+
+        resources = {}
+        conditions = {}
+
+        params, tags = self.__get_rule_parameters(rule_name)
+        input_params = json.loads(params["InputParameters"])
+        for input_param in input_params:
+            cfn_param = {}
+            cfn_param["Description"] = "Pass-through to required Input Parameter " + input_param + " for Config Rule " + rule_name
+            if len(input_params[input_param].strip()) == 0:
+                default = "<REQUIRED>"
+            else:
+                default = input_params[input_param]
+            cfn_param["Default"] = default
+            cfn_param["Type"] = "String"
+            cfn_param["MinLength"] = 1
+            cfn_param["ConstraintDescription"] = "This parameter is required."
+
+            param_name = self.__get_alphanumeric_rule_name(rule_name)+input_param
+            parameters[param_name] = cfn_param
+            required_parameter_group["Parameters"].append(param_name)
+
+        if "OptionalParameters" in params:
+            optional_params = json.loads(params["OptionalParameters"])
+            for optional_param in optional_params:
+                cfn_param = {}
+                cfn_param["Description"] = "Pass-through to optional Input Parameter " + optional_param + " for Config Rule " + rule_name
+                cfn_param["Default"] = optional_params[optional_param]
+                cfn_param["Type"] = "String"
+
+                param_name = self.__get_alphanumeric_rule_name(rule_name)+optional_param
+
+                parameters[param_name] = cfn_param
+                optional_parameter_group["Parameters"].append(param_name)
+
+                conditions[param_name] = {
+                    "Fn::Not": [
+                        {
+                            "Fn::Equals": [
+                                "",
+                                {
+                                    "Ref": param_name
+                                }
+                            ]
+                        }
+                    ]
+                }
+
+        config_rule = {}
+        config_rule["Type"] = "AWS::Config::ConfigRule"
+
+        properties = {}
+        source = {}
+        source["SourceDetails"] = []
+
+        properties["ConfigRuleName"] = rule_name
+        properties["Description"] = rule_name
+
+        #Create the SourceDetails stanza.
+        if 'SourceEvents' in params:
+            #If there are SourceEvents specified for the Rule, generate the Scope clause.
+            source_events = params['SourceEvents'].split(",")
+            properties["Scope"] = {"ComplianceResourceTypes": source_events}
+
+            #Also add the appropriate event source.
+            source["SourceDetails"].append(
+                {
+                    "EventSource": "aws.config",
+                    "MessageType": "ConfigurationItemChangeNotification"
+                })
+        if 'SourcePeriodic' in params:
+            source["SourceDetails"].append(
+                {
+                    "EventSource": "aws.config",
+                    "MessageType": "ScheduledNotification",
+                    "MaximumExecutionFrequency": params["SourcePeriodic"]
+                }
+            )
+
+        #If it's a Managed Rule it will have a SourceIdentifier string in the params and we need to set the source appropriately.  Otherwise, set the source to our custom lambda function.
+        if 'SourceIdentifier' in params:
+            source["Owner"] = "AWS"
+            source["SourceIdentifier"] = params['SourceIdentifier']
+            del source["SourceDetails"]
+        else:
+            source["Owner"] = "CUSTOM_LAMBDA"
+            source["SourceIdentifier"] = { "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${LambdaAccountId}:function:RDK-Rule-Function-"+self.__get_stack_name_from_rule_name(rule_name) }
+
+        properties["Source"] = source
+
+        properties["InputParameters"] = {}
+
+        if "InputParameters" in params:
+            for required_param in json.loads(params["InputParameters"]):
+                cfn_param_name = self.__get_alphanumeric_rule_name(rule_name)+required_param
+                properties["InputParameters"][required_param] = { "Ref": cfn_param_name }
+
+        if "OptionalParameters" in params:
+            for optional_param in json.loads(params["OptionalParameters"]):
+                cfn_param_name = self.__get_alphanumeric_rule_name(rule_name)+optional_param
+                properties["InputParameters"][optional_param] = {
+                    "Fn::If": [
+                        cfn_param_name,
+                        {
+                            "Ref": cfn_param_name
+                        },
+                        {
+                            "Ref": "AWS::NoValue"
+                        }
+                    ]
+                }
+
+
+        config_rule["Properties"] = properties
+        config_rule_resource_name = self.__get_alphanumeric_rule_name(rule_name)+"ConfigRule"
+        resources[config_rule_resource_name] = config_rule
+
+        if "Remediation" in params:
+            remediation = self.__create_remediation_cloudformation_block(params["Remediation"])
+            remediation["DependsOn"] = [config_rule_resource_name]
+            if not self.args.rules_only:
+                remediation["DependsOn"].append("ConfigRole")
+
+            resources[self.__get_alphanumeric_rule_name(rule_name)+"Remediation"] = remediation
+
+        template["Resources"] = resources
+        template["Conditions"] = conditions
+        template["Parameters"] = parameters
+
+        #append cloudformation snippet for additional resources in yaml or json format
+        template=self.__append_additional_resources(template, rule_name, additional_resources_path)
+
+        return template
 
     def __append_additional_resources(self, template_body, rule_name, additional_resources_path):
         local_path="./" + rule_name + additional_resources_path

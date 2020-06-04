@@ -2,22 +2,26 @@
   "AWSTemplateFormatVersion": "2010-09-09",
   "Description": "AWS CloudFormation template to create custom AWS Config rules. You will be billed for the AWS resources used if you create a stack from this template.",
   "Resources": {
-    "S3BUCKETSERVERSIDEENCRYPTIONENABLEDv2": {
+    "EC2INSTANCENOPUBLICIP": {
       "Type": "AWS::CloudFormation::Stack",
       "Properties": {
-        "TemplateURL": "https://config-rule-code-bucket-004670408193-us-east-1.s3.amazonaws.com/S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED_v2/S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED_v2-config-rule.json"
+        "TemplateURL": "https://config-rule-code-bucket-004670408193-us-east-1.s3.amazonaws.com/EC2_INSTANCE_NO_PUBLIC_IP/EC2_INSTANCE_NO_PUBLIC_IP-config-rule.json",
+        "Parameters": {
+          "LambdaAccountId": {
+            "Ref": "LambdaAccountId"
+          }
+        }
       }
     },
     "S3BUCKETSERVERSIDEENCRYPTIONENABLED": {
       "Type": "AWS::CloudFormation::Stack",
       "Properties": {
-        "TemplateURL": "https://config-rule-code-bucket-004670408193-us-east-1.s3.amazonaws.com/S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED/S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED-config-rule.json"
-      }
-    },
-    "GPSECECSTags": {
-      "Type": "AWS::CloudFormation::Stack",
-      "Properties": {
-        "TemplateURL": "https://config-rule-code-bucket-004670408193-us-east-1.s3.amazonaws.com/GPSEC_ECS_Tags/GPSEC_ECS_Tags-config-rule.json"
+        "TemplateURL": "https://config-rule-code-bucket-004670408193-us-east-1.s3.amazonaws.com/S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED/S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED-config-rule.json",
+        "Parameters": {
+          "LambdaAccountId": {
+            "Ref": "LambdaAccountId"
+          }
+        }
       }
     }
   },

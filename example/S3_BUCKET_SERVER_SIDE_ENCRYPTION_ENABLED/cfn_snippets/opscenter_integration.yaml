@@ -77,7 +77,7 @@ Resources:
           - 'Config Rules Compliance Change'
         detail:
           configRuleName:
-            - S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED_v2
+            - S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
           newEvaluationResult:
             complianceType:
               - NON_COMPLIANT

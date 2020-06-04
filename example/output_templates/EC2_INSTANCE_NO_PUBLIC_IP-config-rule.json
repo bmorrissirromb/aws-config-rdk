@@ -1,0 +1,147 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "AWS CloudFormation template to create custom AWS Config rules. You will be billed for the AWS resources used if you create a stack from this template.",
+  "Resources": {
+    "EC2INSTANCENOPUBLICIPConfigRule": {
+      "Type": "AWS::Config::ConfigRule",
+      "Properties": {
+        "ConfigRuleName": "EC2_INSTANCE_NO_PUBLIC_IP",
+        "Description": "EC2_INSTANCE_NO_PUBLIC_IP",
+        "Scope": {
+          "ComplianceResourceTypes": [
+            "AWS::EC2::Instance"
+          ]
+        },
+        "Source": {
+          "SourceDetails": [
+            {
+              "EventSource": "aws.config",
+              "MessageType": "ConfigurationItemChangeNotification"
+            }
+          ],
+          "Owner": "CUSTOM_LAMBDA",
+          "SourceIdentifier": {
+            "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${LambdaAccountId}:function:RDK-Rule-Function-EC2INSTANCENOPUBLICIP"
+          }
+        },
+        "InputParameters": {}
+      }
+    },
+    "EC2INSTANCENOPUBLICIPRemediation": {
+      "Type": "AWS::Config::RemediationConfiguration",
+      "DependsOn": [
+        "EC2INSTANCENOPUBLICIPConfigRule"
+      ],
+      "Properties": {
+        "Automatic": true,
+        "ConfigRuleName": "EC2_INSTANCE_NO_PUBLIC_IP",
+        "MaximumAutomaticAttempts": "2",
+        "Parameters": {
+          "AutomationAssumeRole": {
+            "StaticValue": {
+              "Values": [
+                {
+                  "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/${AutomationAssumeRoleName}"
+                }
+              ]
+            }
+          },
+          "InstanceId": {
+            "ResourceValue": "RESOURCE_ID"
+          }
+        },
+        "ResourceType": "AWS::EC2::Instance",
+        "RetryAttemptSeconds": "2",
+        "TargetId": "AWS-StopEC2Instance",
+        "TargetType": "SSM_DOCUMENT",
+        "TargetVersion": "1"
+      }
+    },
+    "AutomationAssumeRole": {
+      "Condition": "IsMainRegion",
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Path": "/",
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": {
+              "Ref": "AutomationAssumeRoleName"
+            },
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "ec2:*",
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Conditions": {
+    "IsMainRegion": {
+      "Fn::Equals": [
+        {
+          "Ref": "AWS::Region"
+        },
+        {
+          "Ref": "MainRegion"
+        }
+      ]
+    }
+  },
+  "Parameters": {
+    "LambdaAccountId": {
+      "Description": "Account ID that contains Lambda functions for Config Rules.",
+      "Type": "String",
+      "MinLength": "12",
+      "MaxLength": "12"
+    },
+    "MainRegion": {
+      "Description": "Region which is designated as main Region and use condition to only deploy resources if it is in main region like IAM resources",
+      "Default": "us-east-1",
+      "AllowedValues": [
+        "us-east-1",
+        "us-east-2",
+        "us-west-1",
+        "us-west-2",
+        "ap-south-1",
+        "ap-northeast-1",
+        "ap-northeast-2",
+        "ap-southeast-1",
+        "ap-southeast-2",
+        "ca-central-1",
+        "eu-central-1",
+        "eu-west-1",
+        "eu-west-2",
+        "eu-west-3",
+        "sa-east-1"
+      ],
+      "AllowedPattern": "^.{0,14}$",
+      "ConstraintDescription": "Select one AWS Region only.",
+      "Type": "String"
+    },
+    "AutomationAssumeRoleName": {
+      "Type": "String",
+      "Description": "EC2_INSTANCE_NO_PUBLIC_IP auto-remediation IAM role name",
+      "Default": "EC2_INSTANCE_NO_PUBLIC_IP-remediation-iam"
+    }
+  }
+}

@@ -1,116 +1,29 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "AWS CloudFormation template to create Managed AWS Config rules. You will be billed for the AWS resources used if you create a stack from this template.",
-  "Parameters": {
-    "RuleName": {
-      "Description": "Name of the Rule",
-      "Type": "String",
-      "MinLength": "1",
-      "MaxLength": "255"
-    },
-    "SourceEvents": {
-      "Description": "Event Type",
-      "Type": "CommaDelimitedList",
-      "Default": "NONE"
-    },
-    "SourcePeriodic": {
-      "Description": "Execution Frequency",
-      "Type": "String",
-      "MinLength": "1",
-      "MaxLength": "255",
-      "Default": "NONE"
-    },
-    "SourceIdentifier": {
-      "Description": "Source Identifier of Managed Rule",
-      "Type": "String",
-      "MinLength": "1",
-      "MaxLength": "255"
-    },
-    "SourceInputParameters": {
-      "Description": "Input Parameters",
-      "Type": "String",
-      "Default": "{}"
-    }
-  },
-  "Conditions": {
-    "EventTriggered": {
-      "Fn::Not": [
-        {
-          "Fn::Equals": [
-            {
-              "Fn::Join": [
-                ",",
-                {
-                  "Ref": "SourceEvents"
-                }
-              ]
-            },
-            "NONE"
-          ]
-        }
-      ]
-    },
-    "PeriodicTriggered": {
-      "Fn::Not": [
-        {
-          "Fn::Equals": [
-            {
-              "Ref": "SourcePeriodic"
-            },
-            "NONE"
-          ]
-        }
-      ]
-    }
-  },
+  "Description": "AWS CloudFormation template to create custom AWS Config rules. You will be billed for the AWS resources used if you create a stack from this template.",
   "Resources": {
-    "rdkConfigRule": {
+    "S3BUCKETSERVERSIDEENCRYPTIONENABLEDConfigRule": {
       "Type": "AWS::Config::ConfigRule",
       "Properties": {
-        "ConfigRuleName": {
-          "Ref": "RuleName"
-        },
-        "Description": {
-          "Ref": "RuleName"
-        },
+        "ConfigRuleName": "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED",
+        "Description": "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED",
         "Scope": {
-          "Fn::If": [
-            "EventTriggered",
-            {
-              "ComplianceResourceTypes": {
-                "Ref": "SourceEvents"
-              }
-            },
-            {
-              "Ref": "AWS::NoValue"
-            }
-          ]
-        },
-        "MaximumExecutionFrequency": {
-          "Fn::If": [
-            "PeriodicTriggered",
-            {
-              "Ref": "SourcePeriodic"
-            },
-            {
-              "Ref": "AWS::NoValue"
-            }
+          "ComplianceResourceTypes": [
+            "AWS::S3::Bucket"
           ]
         },
         "Source": {
           "Owner": "AWS",
-          "SourceIdentifier": {
-            "Ref": "SourceIdentifier"
-          }
+          "SourceIdentifier": "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED"
         },
-        "InputParameters": {
-          "Ref": "SourceInputParameters"
-        }
+        "InputParameters": {}
       }
     },
-    "Remediation": {
+    "S3BUCKETSERVERSIDEENCRYPTIONENABLEDRemediation": {
       "Type": "AWS::Config::RemediationConfiguration",
-      "DependsOn": "rdkConfigRule",
+      "DependsOn": [
+        "S3BUCKETSERVERSIDEENCRYPTIONENABLEDConfigRule"
+      ],
       "Properties": {
         "Automatic": true,
         "ConfigRuleName": "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED",
@@ -120,14 +33,7 @@
             "StaticValue": {
               "Values": [
                 {
-                  "Fn::Sub": [
-                    "arn:aws:iam::${AWS::AccountId}:role/${S3BUCKETSERVERSIDEENCRYPTIONENABLEDIAM}",
-                    {
-                      "S3BUCKETSERVERSIDEENCRYPTIONENABLEDIAM": {
-                        "Fn::ImportValue": "S3-BUCKET-SERVER-SIDE-ENCRYPTION-ENABLED-sns-iam"
-                      }
-                    }
-                  ]
+                  "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/${MyTopicRoleName}"
                 }
               ]
             }
@@ -143,14 +49,7 @@
             "StaticValue": {
               "Values": [
                 {
-                  "Fn::Sub": [
-                    "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${S3BUCKETSERVERSIDEENCRYPTIONENABLEDSnsTopic}",
-                    {
-                      "S3BUCKETSERVERSIDEENCRYPTIONENABLEDSnsTopic": {
-                        "Fn::ImportValue": "S3-BUCKET-SERVER-SIDE-ENCRYPTION-ENABLED-sns-topic"
-                      }
-                    }
-                  ]
+                  "Fn::Sub": "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${MyTopic}"
                 }
               ]
             }
@@ -161,6 +60,235 @@
         "TargetId": "AWS-PublishSNSNotification",
         "TargetType": "SSM_DOCUMENT",
         "TargetVersion": "1"
+      }
+    },
+    "CreateOpsItemRole": {
+      "Condition": "IsMainRegion",
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "sns.amazonaws.com"
+              }
+            }
+          ]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": {
+              "Ref": "CreateOpsItemRoleName"
+            },
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:CreateOpsItem",
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "CheckCloudTrailCloudWatchLogsConfigRuleCloudWatchEvent": {
+      "Type": "AWS::Events::Rule",
+      "Properties": {
+        "Description": "CloudWatch Rule which creates Ops Items for CloudTrail Compliance Events",
+        "EventPattern": {
+          "source": [
+            "aws.config"
+          ],
+          "detail-type": [
+            "Config Rules Compliance Change"
+          ],
+          "detail": {
+            "configRuleName": [
+              "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED"
+            ],
+            "newEvaluationResult": {
+              "complianceType": [
+                "NON_COMPLIANT"
+              ]
+            }
+          }
+        },
+        "State": "ENABLED",
+        "Targets": [
+          {
+            "Arn": {
+              "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:opsitem"
+            },
+            "Id": "SSM-OpsItem",
+            "RoleArn": {
+              "Fn::GetAtt": [
+                "CreateOpsItemRole",
+                "Arn"
+              ]
+            },
+            "InputTransformer": {
+              "InputTemplate": {
+                "Fn::Sub": [
+                  "{ \"title\": \"CloudTrail CloudWatch Logs Compliance Failure\", \"description\": \"CloudWatch Event Rule was triggered for Config Compliance Rule Failure.\", \"source\": \"Config Compliance\", \"priority\": \"2\", \"severity\": \"1\", \"notifications\": [{ \"arn\": \"arn:${AWS::Partition}:sns:${AWS::Region}:${accountId}:OpsCenterEventNotificationTopic\"}], \"resources\": <resources>, \"operationalData\": { \"/aws/dedup\": {\"type\": \"SearchableString\",\"value\": \"{\\\"dedupString\\\":\\\"SSMOpsItems-S3-Encrypted-enabled-failed\\\"}\"}, \"/aws/automations\": { \"value\": \"[ { \\\"automationType\\\": \\\"AWS:SSM:Automation\\\", \\\"automationId\\\": \\\"AWS-EnableS3BucketEncryption\\\" } ]\" }, \"/aws/resources\": {\"value\": \"[{\\\"arn\\\":\\\"arn:aws:s3:::$resourceID\\\"}]\",\"type\": \"SearchableString\"}, \"configRuleName\": {\"type\": \"SearchableString\",\"value\": <configRuleName>}, \"resourceType\": {\"type\": \"SearchableString\",\"value\": <resourceType>}, \"resourceId\": {\"type\": \"SearchableString\",\"value\": <resourceId>} } }",
+                  {
+                    "accountId": {
+                      "Fn::FindInMap": [
+                        "Settings",
+                        "SnSOpsItem",
+                        {
+                          "Ref": "Stage"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "InputPathsMap": {
+                "configRuleName": "$.configRuleName",
+                "resources": "$.resources",
+                "resourceType": "$.detail.resourceType",
+                "resourceId": "$.detail.resourceId"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "MyTopicRole": {
+      "Condition": "IsMainRegion",
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "sns.amazonaws.com"
+              }
+            }
+          ]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": {
+              "Ref": "MyTopicRoleName"
+            },
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "sns:*",
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "MyTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "DisplayName": {
+          "Ref": "TopicName"
+        },
+        "TopicName": {
+          "Ref": "TopicName"
+        }
+      }
+    }
+  },
+  "Conditions": {
+    "IsMainRegion": {
+      "Fn::Equals": [
+        {
+          "Ref": "AWS::Region"
+        },
+        {
+          "Ref": "MainRegion"
+        }
+      ]
+    }
+  },
+  "Parameters": {
+    "LambdaAccountId": {
+      "Description": "Account ID that contains Lambda functions for Config Rules.",
+      "Type": "String",
+      "MinLength": "12",
+      "MaxLength": "12"
+    },
+    "MainRegion": {
+      "Description": "Region which is designated as main Region in your Compliance Account.",
+      "Default": "us-east-1",
+      "AllowedValues": [
+        "us-east-1",
+        "us-east-2",
+        "us-west-1",
+        "us-west-2",
+        "ap-south-1",
+        "ap-northeast-1",
+        "ap-northeast-2",
+        "ap-southeast-1",
+        "ap-southeast-2",
+        "ca-central-1",
+        "eu-central-1",
+        "eu-west-1",
+        "eu-west-2",
+        "eu-west-3",
+        "sa-east-1"
+      ],
+      "AllowedPattern": "^.{0,14}$",
+      "ConstraintDescription": "Select one AWS Region only.",
+      "Type": "String"
+    },
+    "CreateOpsItemRoleName": {
+      "Type": "String",
+      "Description": "cloudwatch IAM role name",
+      "Default": "S3-BUCKET-SERVER-SIDE-ENCRYPTION-ENABLED-createOpsItem-iam"
+    },
+    "Stage": {
+      "Type": "String",
+      "Description": "Deploy to Gamma or Prod Endpoint for Ops Center",
+      "Default": "Prod",
+      "AllowedValues": [
+        "Gamma",
+        "Prod"
+      ]
+    },
+    "CloudWatchEventIAMRole": {
+      "Type": "String",
+      "Description": "The IAM role that grants CloudWatchEvent access to create OpsItems",
+      "Default": "service-role/AWS_Events_Invoke_Create_Ops_Item_1865820173"
+    },
+    "MyTopicRoleName": {
+      "Type": "String",
+      "Description": "SNS Topic IAM role name",
+      "Default": "S3-BUCKET-SERVER-SIDE-ENCRYPTION-ENABLED-sns-iam"
+    },
+    "TopicName": {
+      "Type": "String",
+      "Description": "SNS Topic Name",
+      "Default": "S3-BUCKET-SERVER-SIDE-ENCRYPTION-ENABLED-sns-topic"
+    }
+  },
+  "Mappings": {
+    "Settings": {
+      "SnSOpsItem": {
+        "Prod": 946491653051,
+        "Gamma": 111111111111
       }
     }
   }

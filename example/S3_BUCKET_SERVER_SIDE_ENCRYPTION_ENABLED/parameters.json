@@ -19,7 +19,7 @@
         "AutomationAssumeRole": {
           "StaticValue": {
             "Values": [
-              { "Fn::Sub": ["arn:aws:iam::${AWS::AccountId}:role/${S3BUCKETSERVERSIDEENCRYPTIONENABLEDIAM}", {"S3BUCKETSERVERSIDEENCRYPTIONENABLEDIAM": {"Fn::ImportValue": "S3-BUCKET-SERVER-SIDE-ENCRYPTION-ENABLED-sns-iam"}} ] }
+              { "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/${MyTopicRoleName}" }
             ]
           }
         },
@@ -33,7 +33,7 @@
         "TopicArn": {
           "StaticValue": {
             "Values": [
-              { "Fn::Sub": ["arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${S3BUCKETSERVERSIDEENCRYPTIONENABLEDSnsTopic}", {"S3BUCKETSERVERSIDEENCRYPTIONENABLEDSnsTopic": {"Fn::ImportValue": "S3-BUCKET-SERVER-SIDE-ENCRYPTION-ENABLED-sns-topic"}} ] }
+              { "Fn::Sub": "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${MyTopic}" }
             ]
           }
         }
@@ -45,5 +45,5 @@
       "TargetVersion": "1"
     }
   },
-  "Tags": "[{\"Key\" : \"keyname1\",\"Value\" : \"value1\"}]"
+  "Tags": "[]"
 }

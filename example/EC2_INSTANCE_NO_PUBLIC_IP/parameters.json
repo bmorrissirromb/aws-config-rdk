@@ -1,0 +1,36 @@
+{
+  "Version": "1.0",
+  "Parameters": {
+    "RuleName": "EC2_INSTANCE_NO_PUBLIC_IP",
+    "SourceRuntime": "python3.6",
+    "CodeKey": "EC2_INSTANCE_NO_PUBLIC_IP.zip",
+    "InputParameters": "{}",
+    "OptionalParameters": "{}",
+    "SourceEvents": "AWS::EC2::Instance",
+    "Remediation": {
+      "Automatic": true,
+      "ConfigRuleName": "EC2_INSTANCE_NO_PUBLIC_IP",
+      "MaximumAutomaticAttempts": "2",
+      "Parameters": {
+        "AutomationAssumeRole": {
+          "StaticValue": {
+            "Values": [
+              { "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/${AutomationAssumeRoleName}" }
+            ]
+          }
+        },
+        "InstanceId": {
+          "ResourceValue": {
+            "Value": "RESOURCE_ID"
+          }
+        }
+      },
+      "ResourceType": "AWS::EC2::Instance",
+      "RetryAttemptSeconds": "2",
+      "TargetId": "AWS-StopEC2Instance",
+      "TargetType": "SSM_DOCUMENT",
+      "TargetVersion": "1"
+    }
+  },
+  "Tags": "[]"
+}
